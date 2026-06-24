@@ -6,7 +6,7 @@ from PIL import Image
 from insightface.app import FaceAnalysis
 from src.config import (
     FACE_MODEL_NAME, FACE_DET_SIZE, FACE_DET_THRESHOLD,
-    FACE_PADDING, FACE_MIN_CROP_SIZE,
+    FACE_PADDING, FACE_MIN_CROP_SIZE, MAX_IMAGE_INPUT_SIZE,
 )
 
 # Aktifkan support HEIC/HEIF lewat PIL agar bisa dibaca langsung
@@ -44,6 +44,15 @@ def extract_faces(image_path, model=None):
         img_rgb = np.array(pil_img)
     except Exception as e:
         raise RuntimeError(f"Gagal membaca file: {e}") from e
+
+    # Resize foto besar sebelum deteksi — speedup signifikan tanpa kehilangan akurasi
+    # (InsightFace tetap resize ke 640x640 secara internal)
+    h, w = img_rgb.shape[:2]
+    if max(h, w) > MAX_IMAGE_INPUT_SIZE:
+        scale = MAX_IMAGE_INPUT_SIZE / max(h, w)
+        new_w = max(1, int(round(w * scale)))
+        new_h = max(1, int(round(h * scale)))
+        img_rgb = cv2.resize(img_rgb, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
     faces = model.get(img_rgb)
 

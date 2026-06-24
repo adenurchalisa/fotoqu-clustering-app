@@ -1,11 +1,14 @@
 """
-Semua hyperparameter dan konstanta.
-Nilai-nilai ini berasal dari hasil eksperimen NB05 (FAISS + HDBSCAN).
+Hyperparameter dari hasil eksperimen NB09 (UMAP + HDBSCAN).
 
-Konfigurasi terbaik (Final NB05):
-  Coverage Rate : 92.36%
-  Silhouette    : 0.3673
-  n_clusters    : 144
+Konfigurasi terbaik (NB09 - Best Coverage):
+  Coverage Rate    : 99.3%
+  Silhouette       : 0.9041
+  n_clusters       : 95
+  n_components     : 30
+  n_neighbors      : 30
+  min_cluster_size : 20
+  min_samples      : 20
 """
 
 import os
@@ -14,24 +17,27 @@ import os
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 
 # InsightFace
-FACE_MODEL_NAME    = "buffalo_l"    # Model InsightFace untuk deteksi + embedding
-FACE_DET_SIZE      = (640, 640)     # Ukuran input face detection
-FACE_DET_THRESHOLD = 0.5            # Confidence threshold deteksi wajah
-FACE_PADDING       = 0.1            # Padding crop wajah (10% dari bounding box)
-FACE_MIN_CROP_SIZE = 20             # Ukuran minimum crop wajah dalam pixel
+FACE_MODEL_NAME      = "buffalo_l"
+FACE_DET_SIZE        = (640, 640)
+FACE_DET_THRESHOLD   = 0.5
+FACE_PADDING         = 0.1
+FACE_MIN_CROP_SIZE   = 20
+MAX_IMAGE_INPUT_SIZE = 1920  # Resize foto besar ke max dimensi ini sebelum deteksi (speedup)
 
-# HDBSCAN — dari hasil eksperimen NB05 (Final)
-# Langsung ke embedding 512-dim (L2-normalized), tanpa UMAP
-HDBSCAN_MIN_CLUSTER_SIZE         = 50           # Minimum anggota per cluster
-HDBSCAN_MIN_SAMPLES              = 5            # Kontrol konservatisme noise
-HDBSCAN_CLUSTER_SELECTION_METHOD = "eom"        # "eom" atau "leaf"
-HDBSCAN_METRIC                   = "euclidean"  # equiv. cosine karena embedding sudah L2-normalized
+# UMAP — konfigurasi terbaik dari NB09 (TETAP, tidak berubah antar dataset)
+UMAP_N_COMPONENTS = 30
+UMAP_N_NEIGHBORS  = 30
+UMAP_MIN_DIST     = 0.0
+UMAP_RANDOM_STATE = 42
+
+# HDBSCAN — parameter dihitung adaptif di clustering.py
+HDBSCAN_CLUSTER_SELECTION_METHOD = "eom"
 
 # App limits
 MAX_PHOTOS_UPLOAD = 3000
 SUPPORTED_FORMATS = [".jpg", ".jpeg", ".png", ".heic", ".heif"]
-TEMP_DIR          = "/tmp/facecluster"
+TEMP_DIR          = os.path.join(os.getenv("TMPDIR", os.getenv("TEMP", "/tmp")), "facecluster")
 
 # UI
-MAX_CLUSTER_PREVIEW = 18
+MAX_CLUSTER_PREVIEW = 200
 MAX_NOISE_PREVIEW   = 12

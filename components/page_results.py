@@ -1,7 +1,24 @@
+import os
+import cv2
 import streamlit as st
 from src.utils import create_cluster_zip, numpy_to_pil
 from src.config import MAX_CLUSTER_PREVIEW, MAX_NOISE_PREVIEW
 from components import reset_session_state
+
+
+@st.cache_data(show_spinner=False)
+def _load_full_photo(path, max_dim=1024):
+    """Baca foto penuh sebagai PIL Image (RGB), dengan downscale untuk preview."""
+    img = cv2.imread(path)
+    if img is None:
+        return None
+    h, w = img.shape[:2]
+    if max(h, w) > max_dim:
+        scale = max_dim / max(h, w)
+        new_w = max(1, int(round(w * scale)))
+        new_h = max(1, int(round(h * scale)))
+        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    return numpy_to_pil(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
 
 
 def render():
@@ -38,7 +55,7 @@ def render():
     # ── Multi-select download ──
     cluster_ids = list(clusters.keys())
     cluster_options = {
-        f"Cluster {cid + 1}  ({len(clusters[cid])} wajah)": cid
+        f"Cluster {cid + 1} ({len(set(f['source_photo'] for f in clusters[cid]))} foto)": cid
         for cid in cluster_ids
     }
 
@@ -58,7 +75,7 @@ def render():
             st.info(f"{len(selected_ids)} cluster dipilih · siap diunduh")
         with col_dl:
             st.download_button(
-                label="⬇️ Download ZIP",
+                label="↓ Download ZIP",
                 data=zip_buffer,
                 file_name="facecluster_results.zip",
                 mime="application/zip",
@@ -69,37 +86,59 @@ def render():
 
     # ── Gallery per cluster ──
     for cid in cluster_ids:
-        faces         = clusters[cid]
-        unique_photos = len(set(f["source_photo"] for f in faces))
+        faces = clusters[cid]
+        unique_photo_paths = list(dict.fromkeys(f["source_photo"] for f in faces))
+
+        # Wajah representatif: skor deteksi tertinggi
+        rep_face = max(faces, key=lambda f: f["det_score"])
 
         with st.expander(
-            f"Cluster {cid + 1} — {len(faces)} wajah · {unique_photos} foto",
+            f"👤 Cluster {cid + 1} — {len(faces)} wajah dari {len(unique_photo_paths)} foto",
             expanded=(cid == cluster_ids[0]),
         ):
-            col_info2, col_dl2 = st.columns([3, 1])
-            with col_info2:
-                st.markdown(
-                    f"<p style='color:#64748B; font-size:0.85rem; margin:4px 0;'>"
-                    f"Orang yang sama muncul di <b>{unique_photos}</b> foto</p>",
-                    unsafe_allow_html=True,
+            # Baris atas: thumbnail wajah representatif + info + tombol download
+            col_rep, col_info = st.columns([1, 5])
+            with col_rep:
+                st.image(
+                    numpy_to_pil(rep_face["crop"]),
+                    width=100,
+                    caption="Representatif",
                 )
-            with col_dl2:
+            with col_info:
+                st.caption(
+                    f"Wajah ini muncul di {len(unique_photo_paths)} foto. "
+                    f"Skor deteksi terbaik: {rep_face['det_score']:.2f}"
+                )
                 single_zip = create_cluster_zip(clusters, [cid])
                 st.download_button(
-                    label=f"⬇️ Download",
+                    label=f"↓ Download Cluster {cid + 1}",
                     data=single_zip,
                     file_name=f"cluster_{cid + 1}.zip",
                     mime="application/zip",
                     key=f"dl_{cid}",
                 )
 
-            cols = st.columns(6)
-            for i, face in enumerate(faces[:MAX_CLUSTER_PREVIEW]):
-                with cols[i % 6]:
-                    st.image(numpy_to_pil(face["crop"]), use_container_width=True)
+            st.caption("Foto-foto yang mengandung wajah ini:")
 
-            if len(faces) > MAX_CLUSTER_PREVIEW:
-                st.caption(f"Menampilkan {MAX_CLUSTER_PREVIEW} dari {len(faces)} wajah")
+            # Grid foto penuh (bukan crop wajah)
+            cols = st.columns(3)
+            shown = 0
+            for i, path in enumerate(unique_photo_paths[:MAX_CLUSTER_PREVIEW]):
+                img_pil = _load_full_photo(path)
+                if img_pil is None:
+                    continue
+                with cols[shown % 3]:
+                    st.image(
+                        img_pil,
+                        use_container_width=True,
+                        caption=os.path.basename(path),
+                    )
+                shown += 1
+
+            if len(unique_photo_paths) > MAX_CLUSTER_PREVIEW:
+                st.caption(
+                    f"Menampilkan {MAX_CLUSTER_PREVIEW} dari {len(unique_photo_paths)} foto"
+                )
 
     # ── Noise section ──
     if noise_faces:
@@ -124,7 +163,7 @@ def render():
     st.markdown("---")
     _, col_btn, _ = st.columns([1, 2, 1])
     with col_btn:
-        if st.button("🔄  Proses Foto Baru", use_container_width=True):
+        if st.button("🔄 Proses Foto Baru", use_container_width=True):
             reset_session_state()
             st.session_state.page = "upload"
             st.rerun()
