@@ -36,7 +36,7 @@ HDBSCAN_CLUSTER_SELECTION_METHOD = "eom"
 # App limits
 MAX_PHOTOS_UPLOAD = 3000
 SUPPORTED_FORMATS = [".jpg", ".jpeg", ".png", ".heic", ".heif"]
-TEMP_DIR          = "/tmp/facecluster"
+TEMP_DIR          = os.path.join(os.getenv("TMPDIR", os.getenv("TEMP", "/tmp")), "facecluster")
 
 # UI
 MAX_CLUSTER_PREVIEW = 200
