@@ -1,62 +1,80 @@
-# 📸 FaceCluster
+# 📸 FotoQu / FaceCluster
 
-Aplikasi web (Streamlit) untuk mendeteksi wajah pada kumpulan foto dan
-mengelompokkan foto secara otomatis berdasarkan orang. Sumber foto bisa dari
-upload langsung (gambar atau ZIP) atau folder Google Drive publik. Hasilnya
-berupa cluster per-orang yang bisa diunduh sebagai ZIP.
+Aplikasi web untuk mendeteksi wajah pada kumpulan foto dan mengelompokkannya
+secara otomatis berdasarkan orang. Sumber foto bisa dari upload langsung (gambar
+atau ZIP) atau folder Google Drive publik. Hasilnya berupa cluster per-orang yang
+bisa diunduh sebagai ZIP berstruktur folder.
+
+Arsitektur **terpisah**:
+- **Backend** — FastAPI (`backend/`) yang mengekspos pipeline ML sebagai HTTP API,
+  menjalankan job secara async dengan progress lewat Server-Sent Events (SSE).
+- **Frontend** — React + Vite + Tailwind (`frontend/`), SPA yang memanggil API.
 
 ## Persyaratan
 - Python 3.10+
+- Node.js 18+ (untuk frontend)
 - (Opsional) `GOOGLE_API_KEY` — hanya untuk fitur download dari Google Drive
 
-## Instalasi
-
-> **Wajib** menggunakan virtual environment. Buat & aktifkan venv sebelum instalasi.
+## Backend (FastAPI)
 
 ```bash
-# 1. Buat virtual environment
+# 1. Buat & aktifkan virtual environment
 python -m venv venv
+venv\Scripts\Activate.ps1        # Windows PowerShell
+# source venv/Scripts/activate   # Windows Git Bash
+# source venv/bin/activate       # macOS / Linux
 
-# 2. Aktifkan venv
-#    Windows (PowerShell):
-venv\Scripts\Activate.ps1
-#    Windows (Git Bash):
-source venv/Scripts/activate
-#    macOS / Linux:
-source venv/bin/activate
+# 2. Install dependency
+pip install -r backend/requirements.txt
 
-# 3. Install dependency
-pip install -r requirements.txt
+# 3. (Opsional) konfigurasi Google Drive — salin template lalu isi key
+#    backend/.env.example  →  backend/.env
+
+# 4. Jalankan API (dari dalam folder backend/)
+cd backend
+uvicorn main:app --reload        # http://localhost:8000  (docs: /docs)
 ```
 
-Di Linux/Streamlit Cloud, dependency sistem ada di `packages.txt`
+Di Linux, dependency sistem untuk OpenCV ada di `backend/packages.txt`
 (`libgl1-mesa-glx`, `libglib2.0-0`).
 
-## Menjalankan
+## Frontend (React + Tailwind)
 
 ```bash
-streamlit run app.py
+cd frontend
+npm install
+# (opsional) salin .env.example → .env bila backend bukan di http://localhost:8000
+npm run dev                      # http://localhost:5173
 ```
 
-Buka http://localhost:8501 di browser.
+Buka http://localhost:5173 di browser. Pastikan backend sudah berjalan.
 
 ## Konfigurasi Google Drive (opsional)
-Untuk fitur download dari Google Drive, isi API key di
-`.streamlit/secrets.toml` (file ini di-gitignore):
+Fitur download dari Google Drive butuh `GOOGLE_API_KEY`. Set lewat file
+`backend/.env` (di-gitignore):
 
-```toml
-GOOGLE_API_KEY = "..."
+```
+GOOGLE_API_KEY=...
 ```
 
 Cara mendapatkan key: Google Cloud Console → buat project → enable
 **Google Drive API** → Credentials → Create API Key.
 
-## Cara pakai
-1. **Upload** foto (atau ZIP) di tab Upload, atau tempel link folder Google
-   Drive yang di-set *Anyone with the link*.
-2. **Processing** — deteksi wajah (InsightFace) lalu clustering (UMAP + HDBSCAN).
-3. **Hasil** — lihat cluster per orang dan unduh sebagai ZIP.
+## Alur pakai
+1. **Upload** foto / ZIP, atau tempel link folder Google Drive (*Anyone with the link*).
+2. **Processing** — backend mendeteksi wajah (InsightFace) lalu clustering
+   (UMAP + HDBSCAN); frontend menampilkan progress real-time via SSE.
+3. **Hasil** — galeri cluster per orang (render bertahap + lazy-load), unduh
+   per-cluster atau batch sebagai ZIP. Tombol download aktif setelah proses selesai.
+
+## Catatan arsitektur
+- Pipeline ML (face detection + clustering) berjalan sebagai **job async** di
+  background; HTTP request langsung balas `job_id`. Async di sini membuat server
+  responsif & bisa memproses banyak job paralel — **bukan** mempercepat satu batch
+  clustering (UMAP/HDBSCAN bersifat global; untuk percepatan nyata gunakan GPU).
+- State job disimpan in-memory (cukup untuk single-instance). Untuk multi-instance,
+  ganti `backend/core/job_store.py` dengan Redis/DB.
 
 ## Kontribusi
-Gunakan **Conventional Commits**, buat commit yang **atomik** dan kecil agar
-mudah dibaca, dan tulis pesan commit dalam **bahasa Inggris**.
+Gunakan **Conventional Commits**, buat commit **atomik** dan kecil, tulis pesan
+commit dalam **bahasa Inggris**.

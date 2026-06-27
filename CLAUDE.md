@@ -4,63 +4,131 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-**FaceCluster** — a Streamlit web app that detects faces in a photo collection and automatically groups photos by person. Input comes from direct upload (images or a ZIP) or a public Google Drive folder; output is per-person clusters the user can download as ZIPs. The codebase, comments, and UI strings are in **Indonesian** — match that language when editing user-facing text and comments.
+**FotoQu / FaceCluster** — a web app that detects faces in a photo collection and
+automatically groups photos by person. Input comes from direct upload (images or a ZIP)
+or a public Google Drive folder; output is per-person clusters the user can download as
+folder-structured ZIPs.
+
+The app is split into **two independent parts**:
+- **`backend/`** — a FastAPI service exposing the ML pipeline as HTTP endpoints, running
+  jobs asynchronously with progress streamed over Server-Sent Events (SSE).
+- **`frontend/`** — a React + Vite + Tailwind SPA that calls the backend API.
+
+The Python code, comments, and the React UI strings are in **Indonesian** — match that
+language when editing user-facing text and comments.
 
 ## Commands
 
+### Backend
 ```bash
-# 1. Create & activate a virtual environment (required — do this before installing)
 python -m venv venv
-source venv/Scripts/activate     # Windows (Git Bash);  Windows PowerShell: venv\Scripts\Activate.ps1
-# source venv/bin/activate       # macOS / Linux
+venv\Scripts\Activate.ps1                 # Windows PowerShell
+pip install -r backend/requirements.txt
+cd backend
+uvicorn main:app --reload                 # http://localhost:8000  (OpenAPI docs at /docs)
+```
+Run uvicorn **from inside `backend/`** — modules import as `from src...`, `from core...`,
+`from api...`, which resolve when `backend/` is the working directory. `backend/packages.txt`
+lists apt deps (libgl1-mesa-glx, libglib2.0-0) for OpenCV on Linux.
 
-# 2. Install dependencies
-pip install -r requirements.txt          # Python deps
-# packages.txt lists apt deps (libgl1-mesa-glx, libglib2.0-0) for Streamlit Cloud / Linux
-
-# 3. Run the app
-streamlit run app.py                     # serves on http://localhost:8501
+### Frontend
+```bash
+cd frontend
+npm install
+npm run dev                               # http://localhost:5173
+npm run build                             # tsc -b && vite build (use this to type-check)
 ```
 
-Always work inside the activated venv. There is **no test suite, linter, or build step** configured. `app.py` must stay the Streamlit entrypoint (it calls `st.set_page_config` first, before any other Streamlit call).
+There is **no Python test suite or linter** configured. For the frontend, `npm run build`
+runs the TypeScript type-checker and is the closest thing to a CI gate.
 
 ## Commit conventions
-- Use **Conventional Commits** (`docs:`, `feat:`, `fix:`, `refactor:`, `chore:`, …).
-- Keep commits **atomic** — one logical change each — and small enough to read at a glance.
-- Write commit messages in **English** (existing history is Indonesian; English is the convention going forward).
+- **Conventional Commits** (`docs:`, `feat:`, `fix:`, `refactor:`, `chore:`, …).
+- Keep commits **atomic** and small. Commit messages in **English**.
 
 ## Secrets
 
-`GOOGLE_API_KEY` (a Google Drive API v3 key) is required for the Drive-download feature only; upload works without it. It is read in `src/drive_handler.py:_get_api_key` with this precedence: `st.secrets["GOOGLE_API_KEY"]` → `GOOGLE_API_KEY` env var (via `src/config.py`). Local secrets live in `.streamlit/secrets.toml` (gitignored).
+`GOOGLE_API_KEY` (a Google Drive API v3 key) is required for the Drive-download feature
+only; upload works without it. It is loaded via `python-dotenv` from `backend/.env`
+(gitignored; template in `backend/.env.example`) into `src/config.py`, then read by
+`src/drive_handler.py:_get_api_key`. `FRONTEND_ORIGINS` (comma-separated) overrides the
+CORS allow-list (default `http://localhost:5173`).
 
 ## Architecture
 
-### Page routing (single-process SPA)
-`app.py` is a manual router, not Streamlit multipage. It holds a `pages` dict mapping a string key to a `render()` function in `components/page_*.py`. The active page is `st.session_state.page`; navigation = set that key + `st.rerun()`. Flow: `overview → upload → processing → results`. `components/sidebar.py` renders nav buttons and live status. All shared state lives in `st.session_state` (`photos`, `clusters`, `noise_faces`, `metrics`, `face_stats`), initialized in `app.py`.
+### Backend layering
+- **`backend/src/`** — pure ML/IO logic, **free of any web-framework coupling** (this is
+  the old Streamlit `src/`, with all `streamlit` imports removed). Reusable as a library.
+- **`backend/core/`** — runtime glue: `job_store.py` (in-memory `JOBS` dict of `JobState`,
+  replacing Streamlit `session_state`) and `tasks.py` (background runner that calls the
+  pipeline and updates job progress).
+- **`backend/api/`** — FastAPI routers: `jobs.py` (create/status/SSE) and `results.py`
+  (clusters JSON, images, ZIP download).
+- **`backend/main.py`** — app factory: `lifespan` loads the InsightFace model once at
+  startup; CORS middleware; includes routers.
 
-`components/__init__.py:reset_session_state()` clears that state **and** wipes the temp dir — call it before loading a new batch, which the upload/drive flows already do.
+### Async job model
+The ML pipeline is long-running, so it never runs inside a request. `POST /api/jobs/upload`
+or `/api/jobs/drive` creates a `JobState`, schedules the work via `BackgroundTasks`, and
+returns a `job_id` immediately. The frontend subscribes to `GET /api/jobs/{id}/progress`
+(SSE) for live progress, then fetches results when `status == "done"`.
 
-### Two-stage ML pipeline
-`src/pipeline.py:run_full_pipeline` orchestrates everything and reports progress to a Streamlit progress bar (face stage = 0–50%, clustering = 50–100%):
+> Async/BackgroundTasks keep the server responsive and allow concurrent jobs — they do
+> **not** speed up a single clustering batch. UMAP/HDBSCAN are global operations over all
+> embeddings and cannot be partitioned without degrading quality; real single-batch
+> speedup needs GPU (CUDA InsightFace, optionally cuML). Face **detection** is already
+> parallelized via `ThreadPoolExecutor`.
 
-1. **Face detection + embedding** — `src/face_extractor.py:process_all_photos`. Uses InsightFace `buffalo_l` (loaded once via `@st.cache_resource`, prefers CUDA, falls back to CPU). Reads images with **PIL** (robust to Windows Unicode paths + HEIC), downscales to `MAX_IMAGE_INPUT_SIZE` before detection for speed, crops each face with padding. Returns a flat list of face dicts (`embedding`, `crop`, `det_score`, `source_photo`, `bbox`) plus stats. Runs photos across a `ThreadPoolExecutor(max_workers=4)`.
+### Two-stage ML pipeline (unchanged logic)
+`src/pipeline.py:run_full_pipeline(photo_paths, progress_callback)` returns a dict
+`{clusters, noise_faces, metrics, face_stats}` (it no longer writes to any session state).
+Progress is reported purely through `progress_callback(pct, msg)` (face stage 0–50%,
+clustering 50–100%).
 
-2. **Clustering** — `src/clustering.py:run_clustering_pipeline`. UMAP (cosine, fixed NB09 hyperparameters in `config.py`) reduces embeddings, then HDBSCAN groups them. HDBSCAN `min_cluster_size`/`min_samples` are **adaptive** to face count via `get_adaptive_params`. Label `-1` = noise (ungrouped). Returns `clusters` (dict `cluster_id → [faces]`, sorted largest-first), `noise_faces`, and `metrics` (n_clusters, coverage %, noise %, silhouette). Guards small datasets (skips UMAP < 15 faces, caps `n_components`/`n_neighbors`).
+1. **Face detection + embedding** — `src/face_extractor.py:process_all_photos`. InsightFace
+   `buffalo_l` loaded once via a module-level singleton `load_model()` (prefers CUDA, falls
+   back to CPU). Reads images with PIL, downscales to `MAX_IMAGE_INPUT_SIZE`, crops faces.
+   Returns a flat list of face dicts plus stats. Runs photos across `ThreadPoolExecutor`.
+2. **Clustering** — `src/clustering.py:run_clustering_pipeline`. UMAP (cosine, fixed NB09
+   params) then HDBSCAN with adaptive `min_cluster_size`/`min_samples`. Label `-1` = noise.
+   Returns `clusters` (dict `cluster_id → [faces]`, sorted largest-first), `noise_faces`,
+   and `metrics`.
 
-The face dict — particularly `embedding` (clustering input), `crop` (preview/ZIP image), and `source_photo` (download grouping) — is the contract threaded through all three stages; keep those keys intact.
+The face dict — `embedding` (clustering input), `crop` (image bytes for thumbnails/ZIP),
+and `source_photo` (download grouping) — is the contract threaded through all stages; keep
+those keys intact.
 
-### Input sources
-- **Upload** — `src/utils.py:save_uploaded_files`. Handles loose images and ZIPs (with Zip-Slip path guard), converts HEIC→JPG, parallelized with `ThreadPoolExecutor`. Capped at `MAX_PHOTOS_UPLOAD`.
-- **Google Drive** — `src/drive_handler.py:download_from_drive`. Lists folder contents recursively via Drive API v3, then downloads each file over plain HTTP in parallel (`max_workers=20`). Detects Google's "large file" HTML confirmation page from the **leading bytes** (not Content-Type) and re-requests with the extracted confirm token.
+### Image delivery (replaces Streamlit base64 embedding)
+The backend serves images as JPEG endpoints; the React `<img loading="lazy">` tags point at
+them. `JobState.photo_index` maps a global `photo_id` → source path. Endpoints:
+`clusters/{cid}/thumb` (rep-face crop), `photos/{photo_id}` (full photo via
+`src/utils.py:load_full_photo`), `noise/{idx}/thumb`, and `download?cids=` (ZIP).
+
+### Input sources (unchanged)
+- **Upload** — `src/utils.py:save_uploaded_files(files, output_dir=...)`. Handles loose
+  images and ZIPs (Zip-Slip guard), HEIC→JPG, parallelized. `output_dir` is per-job
+  (`JobState.photo_dir`). The API wraps FastAPI `UploadFile` bytes in a small
+  `_UploadAdapter` (`.name` + `.getbuffer()`) so this function is reused unchanged.
+- **Google Drive** — `src/drive_handler.py:download_from_drive(link, output_dir=, ...)`.
+  Lists folder recursively via Drive API v3, downloads in parallel, detects Google's
+  large-file HTML confirmation page from leading bytes.
 
 ### Config & tuning
-`src/config.py` is the single source of truth for all hyperparameters and limits (face model/threshold, UMAP params, photo caps, temp dir, supported formats, UI preview caps). The UMAP values and the largest-bucket HDBSCAN params are tuned constants from the "NB09" experiment — change deliberately. Temp files live under `TEMP_DIR` (OS temp + `facecluster`); `cleanup_temp()` removes them.
+`src/config.py` is the single source of truth for hyperparameters and limits. UMAP values
+and the largest-bucket HDBSCAN params are tuned NB09 constants — change deliberately.
+Temp files live under `TEMP_DIR`; per-job photos under `TEMP_DIR/jobs/<job_id>`.
 
-### Caching conventions (important with Streamlit reruns)
-- `@st.cache_resource` — the InsightFace model (load once per process).
-- `@st.cache_data` — full-photo previews (`page_results._load_full_photo`) and cluster ZIPs (`utils._build_cluster_zip`). ZIP caching can't hash the big numpy crops, so `create_cluster_zip` builds a lightweight hashable **signature** (`_cluster_signature`) used as the cache key while the real cluster data is passed as a `_clusters` arg (leading underscore = "don't hash this").
+### Frontend structure
+`frontend/src/`: `api/client.ts` (fetch wrapper + URL builders + `API_URL` from
+`VITE_API_URL`), `pages/` (`Overview`, `Upload`, `Processing` (SSE via `EventSource`),
+`Results`), `components/` (`TopNav`, `ProgressBar`, `Metric`, `ClusterCard`). Routing is
+`react-router-dom` (`/`, `/upload`, `/processing/:jobId`, `/results/:jobId`). The FotoQu
+theme (cream/sand/ink/accent + DM Serif Display) lives in `tailwind.config.js`. Results
+gates download buttons (only reachable when the job is done) and renders clusters
+progressively, lazy-loading each cluster's photos on expand.
 
 ## Conventions
-- Keep ML/IO work inside `src/`; keep Streamlit rendering inside `components/`. Pages call into `src/` functions and pass a `progress_callback(current, total, msg)` for UI updates.
+- Keep ML/IO work inside `backend/src/` and **framework-free**; keep web concerns in
+  `backend/api/` + `backend/core/`; keep rendering in `frontend/`.
 - New tunable values go in `src/config.py`, not inline literals.
 - User-facing strings and code comments are Indonesian.

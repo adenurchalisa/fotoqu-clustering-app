@@ -46,3 +46,9 @@ test/
 
 # Secrets — jangan pernah di-commit
 .streamlit/secrets.toml
+.env
+backend/.env
+
+# Node / frontend
+node_modules/
+frontend/dist/
