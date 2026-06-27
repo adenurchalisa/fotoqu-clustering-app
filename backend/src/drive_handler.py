@@ -16,14 +16,7 @@ DOWNLOAD_TIMEOUT = 60     # detik timeout per file
 
 
 def _get_api_key():
-    """Ambil API key: prioritaskan st.secrets (Streamlit Cloud), lalu env var."""
-    try:
-        import streamlit as st
-        key = st.secrets.get("GOOGLE_API_KEY", "")
-        if key:
-            return key
-    except Exception:
-        pass
+    """Ambil API key dari environment (lihat src/config.py)."""
     return GOOGLE_API_KEY
 
 
@@ -32,7 +25,7 @@ def _build_service():
     if not api_key:
         raise ValueError(
             "GOOGLE_API_KEY belum dikonfigurasi. "
-            "Tambahkan di .streamlit/secrets.toml (lokal) atau Streamlit Cloud secrets."
+            "Set environment variable GOOGLE_API_KEY (mis. lewat file .env)."
         )
     return build("drive", "v3", developerKey=api_key, cache_discovery=False)
 

@@ -1,7 +1,6 @@
 import logging
 import numpy as np
 import cv2
-import streamlit as st
 from PIL import Image
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from insightface.app import FaceAnalysis
@@ -20,19 +19,28 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-@st.cache_resource
+# Singleton model — di-load sekali per proses (dipanggil saat startup FastAPI via lifespan).
+# Mengganti @st.cache_resource Streamlit dengan cache module-level biasa.
+_model = None
+
+
 def load_model():
+    global _model
+    if _model is not None:
+        return _model
+
     import onnxruntime as ort
-    
+
     available = ort.get_available_providers()
     if "CUDAExecutionProvider" in available:
         providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-    else:        
+    else:
         providers = ["CPUExecutionProvider"]
-    
+
     app = FaceAnalysis(name=FACE_MODEL_NAME, providers=providers)
     app.prepare(ctx_id=0, det_size=FACE_DET_SIZE, det_thresh=FACE_DET_THRESHOLD)
-    return app
+    _model = app
+    return _model
 
 def extract_faces(image_path, model=None):
     

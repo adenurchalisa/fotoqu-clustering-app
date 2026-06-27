@@ -13,6 +13,13 @@ Konfigurasi terbaik (NB09 - Best Coverage):
 
 import os
 
+# Muat variabel dari file .env bila ada (opsional — tidak wajib untuk fitur upload)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 # Google Drive API
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 

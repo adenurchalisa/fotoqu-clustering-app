@@ -3,11 +3,12 @@ import os
 import io
 import zipfile
 import shutil
+from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import streamlit as st
+import cv2
 from PIL import Image
 import numpy as np
-from src.config import TEMP_DIR, SUPPORTED_FORMATS, MAX_PHOTOS_UPLOAD
+from src.config import TEMP_DIR, SUPPORTED_FORMATS, MAX_PHOTOS_UPLOAD, GALLERY_THUMB_MAX_DIM
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +42,13 @@ def _extract_zip_entry(zip_bytes, entry, output_dir):
     return extracted
 
 
-def save_uploaded_files(uploaded_files):
-    """Simpan file upload user ke direktori temporer (paralel). Return: list of photo paths."""
-    output_dir = os.path.join(TEMP_DIR, "uploads")
+def save_uploaded_files(uploaded_files, output_dir=None):
+    """Simpan file upload user ke direktori temporer (paralel). Return: list of photo paths.
+
+    `output_dir` opsional — beri direktori per-job agar upload antar-job tidak bercampur.
+    Tiap file harus punya atribut `.name` dan method `.getbuffer()` (bytes-like)."""
+    if output_dir is None:
+        output_dir = os.path.join(TEMP_DIR, "uploads")
     os.makedirs(output_dir, exist_ok=True)
 
     tasks = []
@@ -110,23 +115,26 @@ def _cluster_signature(clusters, selected_ids):
     )
 
 
-@st.cache_data(show_spinner=False)
-def _build_cluster_zip(_clusters, selected_ids, signature):
+# Cache bytes ZIP terakhir per-signature (bounded). Menggantikan @st.cache_data Streamlit.
+# Menyimpan bytes (bukan BytesIO) agar tiap pemanggil dapat buffer baru — cursor tidak tabrakan.
+_ZIP_CACHE = {}
+_ZIP_CACHE_MAX = 16
+
+
+def _build_cluster_zip(clusters, selected_ids):
     """
-    Buat ZIP dari cluster yang dipilih.
-    Struktur: Cluster_1/foto1.jpg, Cluster_2/foto2.jpg, ...
-    `signature` (lihat _cluster_signature) jadi cache key; `_clusters` diawali underscore
-    agar Streamlit tidak mencoba hash isinya secara langsung.
+    Buat ZIP dari cluster yang dipilih, return: bytes.
+    Struktur: Cluster_1/foto1.jpg, Cluster_2/foto2.jpg, ... + Cluster_N/_preview.jpg
     """
     zip_buffer = io.BytesIO()
 
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for cid in selected_ids:
-            if cid not in _clusters:
+            if cid not in clusters:
                 continue
 
             folder_name = f"Cluster_{cid + 1}"
-            faces = _clusters[cid]
+            faces = clusters[cid]
 
             if not faces:
                 continue
@@ -149,20 +157,42 @@ def _build_cluster_zip(_clusters, selected_ids, signature):
                 arcname = f"{folder_name}/{filename}"
                 zf.write(photo_path, arcname)
 
-    zip_buffer.seek(0)
-    return zip_buffer
+    return zip_buffer.getvalue()
 
 
 def create_cluster_zip(clusters, selected_ids):
-    """Wrapper publik — bangun signature ringan lalu delegasikan ke versi cached."""
+    """Wrapper publik — bangun signature ringan sebagai cache key, return BytesIO siap dikirim."""
     selected_ids = tuple(selected_ids)
     signature = _cluster_signature(clusters, selected_ids)
-    return _build_cluster_zip(clusters, selected_ids, signature)
+
+    data = _ZIP_CACHE.get(signature)
+    if data is None:
+        data = _build_cluster_zip(clusters, selected_ids)
+        if len(_ZIP_CACHE) >= _ZIP_CACHE_MAX:
+            _ZIP_CACHE.pop(next(iter(_ZIP_CACHE)))
+        _ZIP_CACHE[signature] = data
+
+    return io.BytesIO(data)
 
 
 def numpy_to_pil(img_array):
     """Convert numpy array RGB ke PIL Image."""
     return Image.fromarray(img_array.astype(np.uint8))
+
+
+def load_full_photo(path, max_dim=GALLERY_THUMB_MAX_DIM):
+    """Baca foto penuh sebagai PIL Image (RGB), dengan downscale untuk preview.
+    Dipindah dari komponen Streamlit lama; dipakai endpoint gambar backend."""
+    img = cv2.imread(path)
+    if img is None:
+        return None
+    h, w = img.shape[:2]
+    if max(h, w) > max_dim:
+        scale = max_dim / max(h, w)
+        new_w = max(1, int(round(w * scale)))
+        new_h = max(1, int(round(h * scale)))
+        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    return numpy_to_pil(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
 
 
 def cleanup_temp():
