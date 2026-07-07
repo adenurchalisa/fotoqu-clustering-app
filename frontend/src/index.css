@@ -4,7 +4,8 @@
 
 body {
   margin: 0;
-  background: theme("colors.cream");
-  color: theme("colors.ink");
+  background: #f7f5f0;
+  color: #141210;
   font-family: theme("fontFamily.sans");
+  -webkit-font-smoothing: antialiased;
 }

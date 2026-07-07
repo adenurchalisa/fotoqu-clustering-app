@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Download, ChevronDown, ChevronUp } from "lucide-react";
 import {
   clusterThumbUrl,
   fullPhotoUrl,
@@ -34,46 +35,94 @@ export default function ClusterCard({ jobId, cluster, selected, onToggleSelect }
   }
 
   return (
-    <div className="rounded-2xl border border-sandborder bg-white overflow-hidden">
+    <div
+      className="rounded-2xl overflow-hidden transition-colors duration-200"
+      style={{
+        background: "#FFFFFF",
+        border: `1px solid ${selected ? "rgba(201,132,58,0.4)" : "rgba(20,18,16,0.08)"}`,
+      }}
+    >
       <div className="flex items-center gap-4 p-4">
         <input
           type="checkbox"
           checked={selected}
           onChange={() => onToggleSelect(cluster.id)}
-          className="h-5 w-5 accent-[#8A5A1E]"
+          className="h-5 w-5"
+          style={{ accentColor: "#C9843A" }}
           title="Pilih untuk download batch"
         />
         <img
           src={clusterThumbUrl(jobId, cluster.id)}
           loading="lazy"
-          className="h-14 w-14 rounded-lg object-cover bg-sand"
+          className="h-14 w-14 rounded-xl object-cover"
+          style={{ background: "#EDEAE3" }}
           alt={`Cluster ${cluster.label}`}
         />
-        <button onClick={toggleOpen} className="flex-1 text-left">
-          <div className="font-semibold text-ink">Cluster {cluster.label}</div>
-          <div className="text-xs text-muted">
-            {cluster.n_faces} wajah dari {cluster.n_photos} foto · skor{" "}
-            {cluster.rep_score.toFixed(2)}
+        <button onClick={toggleOpen} className="flex-1 text-left" style={{ cursor: "pointer" }}>
+          <div
+            style={{
+              fontFamily: "'Inter', sans-serif",
+              fontSize: "0.9375rem",
+              fontWeight: 600,
+              color: "#141210",
+            }}
+          >
+            Orang {cluster.label}
+          </div>
+          <div
+            className="mt-0.5"
+            style={{
+              fontFamily: "'DM Mono', monospace",
+              fontSize: "0.6875rem",
+              color: "#7A7570",
+            }}
+          >
+            {cluster.n_faces} wajah · {cluster.n_photos} foto · skor {cluster.rep_score.toFixed(2)}
           </div>
         </button>
         <a
           href={downloadUrl(jobId, [cluster.id])}
-          className="rounded-full border border-sandborder px-4 py-1.5 text-sm font-medium text-ink hover:bg-sand transition"
+          className="inline-flex items-center gap-1.5 rounded-full px-4 py-1.5 transition-all duration-200"
+          style={{
+            border: "1px solid rgba(20,18,16,0.12)",
+            fontFamily: "'Inter', sans-serif",
+            fontSize: "0.8125rem",
+            fontWeight: 500,
+            color: "#141210",
+            textDecoration: "none",
+          }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLElement).style.background = "#F7F5F0";
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLElement).style.background = "transparent";
+          }}
         >
-          ↓ ZIP
+          <Download size={14} /> ZIP
         </a>
         <button
           onClick={toggleOpen}
-          className="text-muted text-sm w-6 text-center"
+          className="w-7 h-7 flex items-center justify-center"
+          style={{ color: "#7A7570", background: "none", border: "none", cursor: "pointer" }}
           aria-label="Buka/tutup"
         >
-          {open ? "▲" : "▼"}
+          {open ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
         </button>
       </div>
 
       {open && (
-        <div className="border-t border-sandborder p-4">
-          {loading && <p className="text-sm text-muted">Memuat foto…</p>}
+        <div className="p-4" style={{ borderTop: "1px solid rgba(20,18,16,0.08)" }}>
+          {loading && (
+            <p
+              style={{
+                fontFamily: "'Inter', sans-serif",
+                fontSize: "0.8125rem",
+                color: "#7A7570",
+              }}
+            >
+              Memuat foto…
+            </p>
+          )}
           {photos && photos.length > 0 && (
             <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
               {photos.map((p) => (
@@ -81,10 +130,18 @@ export default function ClusterCard({ jobId, cluster, selected, onToggleSelect }
                   <img
                     src={fullPhotoUrl(jobId, p.photo_id)}
                     loading="lazy"
-                    className="aspect-square w-full rounded-lg object-cover bg-sand"
+                    className="aspect-square w-full rounded-lg object-cover"
+                    style={{ background: "#EDEAE3" }}
                     alt={p.filename}
                   />
-                  <figcaption className="mt-1 truncate text-[0.65rem] text-muted">
+                  <figcaption
+                    className="mt-1 truncate"
+                    style={{
+                      fontFamily: "'DM Mono', monospace",
+                      fontSize: "0.625rem",
+                      color: "#7A7570",
+                    }}
+                  >
                     {p.filename}
                   </figcaption>
                 </figure>

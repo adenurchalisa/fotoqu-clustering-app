@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
+import { motion } from "motion/react";
+import { Loader2, SearchX, AlertTriangle } from "lucide-react";
 import { progressStreamUrl, getJobStatus } from "../api/client";
 import type { JobStatusResponse } from "../types";
 import ProgressBar from "../components/ProgressBar";
+import ProcessHeader from "../components/ProcessHeader";
 
 export default function Processing() {
   const { jobId } = useParams<{ jobId: string }>();
@@ -35,7 +38,15 @@ export default function Processing() {
           setState(s);
           if (s.status === "done") navigate(`/results/${jobId}`, { replace: true });
         })
-        .catch(() => setState({ job_id: jobId, status: "error", progress_pct: 100, message: "Koneksi ke server terputus.", error: "Koneksi terputus" }));
+        .catch(() =>
+          setState({
+            job_id: jobId,
+            status: "error",
+            progress_pct: 100,
+            message: "Koneksi ke server terputus.",
+            error: "Koneksi terputus",
+          })
+        );
     };
 
     return () => es.close();
@@ -45,51 +56,128 @@ export default function Processing() {
   const status = state?.status ?? "running";
 
   return (
-    <div className="mx-auto max-w-2xl">
-      <div className="rounded-3xl border border-sandborder bg-sand px-8 py-7">
-        <h2 className="text-2xl font-bold text-ink">⏳ Memproses Foto</h2>
-        <p className="mt-1 text-sm text-accent">
-          Mendeteksi wajah dan mengelompokkan — bisa memakan beberapa menit.
-        </p>
-      </div>
+    <div style={{ minHeight: "100vh", background: "#F7F5F0" }}>
+      <ProcessHeader />
 
-      {status === "running" && (
-        <div className="mt-6">
-          <ProgressBar pct={pct} />
-          <p className="mt-3 text-center text-sm text-muted">
-            {state?.message ?? "Memulai…"} ({pct}%)
+      <div className="max-w-2xl mx-auto px-6 py-20">
+        <div className="text-center mb-10">
+          <span
+            style={{
+              fontFamily: "'DM Mono', monospace",
+              fontSize: "0.6875rem",
+              letterSpacing: "0.14em",
+              color: "#C9843A",
+            }}
+          >
+            SEDANG DIPROSES
+          </span>
+          <h1
+            className="mt-3"
+            style={{
+              fontFamily: "'DM Serif Display', serif",
+              fontSize: "clamp(1.75rem, 4vw, 2.5rem)",
+              fontWeight: 400,
+              color: "#141210",
+              lineHeight: 1.2,
+            }}
+          >
+            Memilah fotomu…
+          </h1>
+          <p
+            className="mt-3 mx-auto"
+            style={{
+              fontFamily: "'Inter', sans-serif",
+              fontSize: "0.9375rem",
+              lineHeight: 1.6,
+              color: "#7A7570",
+              maxWidth: "40ch",
+            }}
+          >
+            Mendeteksi wajah dan mengelompokkannya — bisa memakan beberapa menit untuk koleksi
+            besar.
           </p>
         </div>
-      )}
 
-      {status === "empty" && (
-        <StateCard
-          tone="warn"
-          icon="🔍"
-          title="Tidak ada wajah terdeteksi"
-          body="Semua foto terbaca, tapi tidak ada wajah yang ditemukan. Coba foto lain."
-        />
-      )}
-
-      {status === "error" && (
-        <StateCard
-          tone="error"
-          icon="❌"
-          title="Proses gagal"
-          body={state?.error ?? state?.message ?? "Terjadi kesalahan."}
-        />
-      )}
-
-      {(status === "empty" || status === "error") && (
-        <div className="mt-6 text-center">
-          <Link
-            to="/upload"
-            className="inline-block rounded-full bg-ink px-6 py-2.5 font-semibold text-cream hover:opacity-90 transition"
+        {status === "running" && (
+          <div
+            className="rounded-2xl p-8"
+            style={{ background: "#FFFFFF", border: "1px solid rgba(20,18,16,0.08)" }}
           >
-            ← Coba Lagi
-          </Link>
-        </div>
-      )}
+            <div className="flex items-center justify-center gap-3 mb-6">
+              <motion.div
+                animate={{ rotate: 360 }}
+                transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                style={{ display: "inline-flex" }}
+              >
+                <Loader2 size={22} color="#C9843A" />
+              </motion.div>
+              <span
+                style={{
+                  fontFamily: "'DM Serif Display', serif",
+                  fontSize: "1.5rem",
+                  color: "#141210",
+                }}
+              >
+                {pct}%
+              </span>
+            </div>
+            <ProgressBar pct={pct} />
+            <p
+              className="mt-4 text-center"
+              style={{
+                fontFamily: "'Inter', sans-serif",
+                fontSize: "0.875rem",
+                color: "#7A7570",
+              }}
+            >
+              {state?.message ?? "Memulai…"}
+            </p>
+          </div>
+        )}
+
+        {status === "empty" && (
+          <StateCard
+            tone="warn"
+            icon={<SearchX size={28} color="#C9843A" />}
+            title="Tidak ada wajah terdeteksi"
+            body="Semua foto terbaca, tapi tidak ada wajah yang ditemukan. Coba foto lain."
+          />
+        )}
+
+        {status === "error" && (
+          <StateCard
+            tone="error"
+            icon={<AlertTriangle size={28} color="#C93A3A" />}
+            title="Proses gagal"
+            body={state?.error ?? state?.message ?? "Terjadi kesalahan."}
+          />
+        )}
+
+        {(status === "empty" || status === "error") && (
+          <div className="mt-8 text-center">
+            <Link
+              to="/"
+              className="inline-flex items-center gap-2 rounded-full px-6 py-3 transition-all duration-200"
+              style={{
+                background: "#141210",
+                color: "#F7F5F0",
+                fontFamily: "'Inter', sans-serif",
+                fontSize: "0.875rem",
+                fontWeight: 500,
+                textDecoration: "none",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLElement).style.background = "#C9843A";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLElement).style.background = "#141210";
+              }}
+            >
+              ← Coba lagi
+            </Link>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -101,19 +189,44 @@ function StateCard({
   body,
 }: {
   tone: "warn" | "error";
-  icon: string;
+  icon: React.ReactNode;
   title: string;
   body: string;
 }) {
-  const colors =
-    tone === "error"
-      ? "border-rose-200 bg-rose-50 text-rose-700"
-      : "border-amber-200 bg-amber-50 text-amber-800";
+  const accent = tone === "error" ? "#C93A3A" : "#C9843A";
   return (
-    <div className={`mt-6 rounded-2xl border px-6 py-6 text-center ${colors}`}>
-      <div className="text-4xl">{icon}</div>
-      <p className="mt-2 font-bold">{title}</p>
-      <p className="mt-1 text-sm">{body}</p>
+    <div
+      className="rounded-2xl p-8 flex flex-col items-center text-center gap-4"
+      style={{ background: "#FFFFFF", border: `1px solid ${accent}33` }}
+    >
+      <div
+        className="w-16 h-16 rounded-full flex items-center justify-center"
+        style={{ background: `${accent}1a` }}
+      >
+        {icon}
+      </div>
+      <div>
+        <p
+          style={{
+            fontFamily: "'DM Serif Display', serif",
+            fontSize: "1.375rem",
+            color: "#141210",
+            marginBottom: "0.5rem",
+          }}
+        >
+          {title}
+        </p>
+        <p
+          style={{
+            fontFamily: "'Inter', sans-serif",
+            fontSize: "0.875rem",
+            lineHeight: 1.6,
+            color: "#7A7570",
+          }}
+        >
+          {body}
+        </p>
+      </div>
     </div>
   );
 }
