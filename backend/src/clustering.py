@@ -127,10 +127,11 @@ def cluster_faces(embeddings):
     labels_all = np.full(n, -1, dtype=int)
     labels_all[inlier_mask] = labels_final
 
-    # 9. Metrics
-    clustered_mask = labels_all >= 0
-    n_clusters     = len(set(labels_all[clustered_mask])) if clustered_mask.any() else 0
-    n_noise        = int((labels_all == -1).sum())
+    # 9. Metrics — silhouette dihitung di UMAP space (30-dim), bukan 512-dim
+    clustered_mask        = labels_all >= 0
+    clustered_mask_inlier = labels_final >= 0   # indeks dalam X_umap (shape: n_inlier)
+    n_clusters            = len(set(labels_all[clustered_mask])) if clustered_mask.any() else 0
+    n_noise               = int((labels_all == -1).sum())
 
     metrics = {
         "n_clusters":   n_clusters,
@@ -140,10 +141,13 @@ def cluster_faces(embeddings):
         "silhouette":   None,
     }
 
-    if n_clusters > 1 and clustered_mask.sum() > n_clusters:
+    if n_clusters > 1 and clustered_mask_inlier.sum() > n_clusters:
         try:
             metrics["silhouette"] = round(
-                silhouette_score(embeddings[clustered_mask], labels_all[clustered_mask]), 4
+                silhouette_score(
+                    X_umap[clustered_mask_inlier],
+                    labels_final[clustered_mask_inlier],
+                ), 4
             )
         except Exception:
             pass
@@ -183,4 +187,3 @@ def run_clustering_pipeline(all_faces, progress_callback=None):
 
     clusters = dict(sorted(clusters.items(), key=lambda x: len(x[1]), reverse=True))
     return clusters, noise_faces, metrics
-
