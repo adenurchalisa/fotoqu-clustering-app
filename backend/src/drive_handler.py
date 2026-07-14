@@ -3,16 +3,35 @@ import os
 import re
 import shutil
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from googleapiclient.discovery import build  # hanya untuk list files
 
-from src.config import GOOGLE_API_KEY, TEMP_DIR, SUPPORTED_FORMATS, MAX_PHOTOS_UPLOAD
+from src.config import (
+    GOOGLE_API_KEY,
+    GOOGLE_OAUTH_CLIENT_ID,
+    GOOGLE_OAUTH_CLIENT_SECRET,
+    GOOGLE_OAUTH_REFRESH_TOKEN,
+    TEMP_DIR,
+    SUPPORTED_FORMATS,
+    MAX_PHOTOS_UPLOAD,
+)
 
 logger = logging.getLogger(__name__)
-MAX_WORKERS = 20          # worker paralel
-DOWNLOAD_TIMEOUT = 60     # detik timeout per file
+
+# Token endpoint & scope untuk membangun Credentials dari refresh token.
+_OAUTH_TOKEN_URI = "https://oauth2.googleapis.com/token"
+_OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+# API key hanya bisa untuk LISTING metadata; download konten harus lewat URL web
+# publik (uc?export=download). URL ini tidak butuh OAuth untuk folder publik, tapi
+# akan diputus Google (RemoteDisconnected) bila terlalu banyak request paralel —
+# jadi worker sengaja dibatasi dan tiap file punya retry + backoff.
+MAX_WORKERS = 5           # worker paralel (>5 memicu throttle/putus koneksi Google)
+DOWNLOAD_TIMEOUT = 300    # detik timeout per file (file besar ~14MB butuh >60s di koneksi lambat)
+MAX_RETRIES = 3           # percobaan ulang per file saat koneksi diputus
+RETRY_BACKOFF = 2         # detik jeda awal, digandakan tiap retry (2s, 4s, ...)
 
 
 def _get_api_key():
@@ -20,7 +39,30 @@ def _get_api_key():
     return GOOGLE_API_KEY
 
 
-def _build_service():
+def _build_oauth_credentials():
+    """Bangun google Credentials dari refresh token di config.
+
+    Return Credentials bila ketiga variabel OAuth terisi, atau None kalau OAuth
+    belum dikonfigurasi (pemanggil lalu jatuh ke jalur API key/web-URL lama).
+    """
+    if not (GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET
+            and GOOGLE_OAUTH_REFRESH_TOKEN):
+        return None
+    from google.oauth2.credentials import Credentials
+    return Credentials(
+        token=None,
+        refresh_token=GOOGLE_OAUTH_REFRESH_TOKEN,
+        client_id=GOOGLE_OAUTH_CLIENT_ID,
+        client_secret=GOOGLE_OAUTH_CLIENT_SECRET,
+        token_uri=_OAUTH_TOKEN_URI,
+        scopes=_OAUTH_SCOPES,
+    )
+
+
+def _build_service(creds=None):
+    """Bangun Drive API service. Pakai OAuth credentials bila ada, else API key."""
+    if creds is not None:
+        return build("drive", "v3", credentials=creds, cache_discovery=False)
     api_key = _get_api_key()
     if not api_key:
         raise ValueError(
@@ -100,10 +142,14 @@ def _extract_confirm_url(html_text: str, file_id: str) -> str:
     return f"https://drive.google.com/uc?export=download&id={file_id}&confirm=t"
 
 
-def _download_file(api_key, file_id, dest_path):
-    """Download satu file dari Drive via URL langsung.
-    Mendeteksi HTML dari bytes pertama (bukan Content-Type) agar
-    tidak salah simpan halaman konfirmasi sebagai file gambar.
+def _download_once(file_id, dest_path):
+    """Satu percobaan download via URL web publik Google Drive.
+
+    API key TIDAK bisa dipakai untuk mengunduh konten file (hanya listing) —
+    Google memblokir alt=media dengan halaman 'automated queries'. Untuk folder
+    publik, URL uc?export=download tidak butuh OAuth. HTML dideteksi dari bytes
+    pertama (bukan Content-Type) agar halaman konfirmasi file besar tidak
+    tersimpan sebagai gambar.
     """
     session = requests.Session()
     url = f"https://drive.google.com/uc?export=download&id={file_id}"
@@ -121,7 +167,6 @@ def _download_file(api_key, file_id, dest_path):
     if _is_html(first_chunk):
         # Google mengembalikan halaman konfirmasi — ekstrak token & ulangi
         html_text = first_chunk.decode("utf-8", errors="ignore")
-        # Baca sisa halaman HTML untuk mencari token
         for chunk in response.iter_content(chunk_size=65536):
             if chunk:
                 html_text += chunk.decode("utf-8", errors="ignore")
@@ -146,12 +191,93 @@ def _download_file(api_key, file_id, dest_path):
                 f.write(chunk)
 
 
-def _download_all_parallel(api_key, files, output_dir, progress_callback=None):
-    """Download semua file secara paralel. Return: (list of path, first_error)."""
+def _download_file(api_key, file_id, dest_path):
+    """Download satu file dengan retry + exponential backoff.
+
+    Google kadang memutus koneksi (RemoteDisconnected) saat banyak request
+    berdekatan. Error koneksi transient dicoba ulang hingga MAX_RETRIES kali;
+    RuntimeError (HTML konfirmasi) tidak diulang karena bukan masalah transient.
+    """
+    last_exc = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            _download_once(file_id, dest_path)
+            return
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.ChunkedEncodingError) as e:
+            last_exc = e
+            if attempt < MAX_RETRIES:
+                delay = RETRY_BACKOFF * (2 ** (attempt - 1))
+                logger.info("Retry %d/%d untuk file %s setelah %ds (%s)",
+                            attempt, MAX_RETRIES - 1, file_id, delay, e)
+                time.sleep(delay)
+    raise last_exc
+
+
+def _download_once_oauth(authed_session, file_id, dest_path):
+    """Satu percobaan download via Drive API alt=media dengan OAuth Bearer token.
+
+    Endpoint API mengembalikan bytes mentah (bukan halaman HTML konfirmasi seperti
+    URL web publik), jadi tidak butuh deteksi HTML / token konfirmasi. OAuth membuat
+    request dihitung sebagai identitas terautentikasi, sehingga tidak di-throttle.
+    """
+    url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media"
+    with authed_session.get(url, stream=True, timeout=DOWNLOAD_TIMEOUT) as response:
+        response.raise_for_status()
+        with open(dest_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    f.write(chunk)
+
+
+def _download_file_oauth(authed_session, file_id, dest_path):
+    """Download satu file lewat OAuth dengan retry + exponential backoff (transient)."""
+    last_exc = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            _download_once_oauth(authed_session, file_id, dest_path)
+            return
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.ChunkedEncodingError) as e:
+            last_exc = e
+            if attempt < MAX_RETRIES:
+                delay = RETRY_BACKOFF * (2 ** (attempt - 1))
+                logger.info("Retry %d/%d untuk file %s setelah %ds (%s)",
+                            attempt, MAX_RETRIES - 1, file_id, delay, e)
+                time.sleep(delay)
+    raise last_exc
+
+
+def _download_all_parallel(files, output_dir, creds=None, progress_callback=None):
+    """Download semua file secara paralel. Return: (list of path, first_error).
+
+    Bila `creds` (OAuth) diberikan, pakai jalur alt=media terautentikasi (cepat,
+    tanpa throttle). Bila None, jatuh ke jalur web-URL publik lama (`_download_file`).
+    """
     photo_paths = []
     first_error = [None]
     lock = threading.Lock()
     completed = [0]
+
+    use_oauth = creds is not None
+    if use_oauth:
+        # Pre-refresh token sekali agar semua worker mulai dengan access token valid,
+        # menghindari beberapa thread me-refresh bersamaan di awal batch.
+        from google.auth.transport.requests import Request
+        creds.refresh(Request())
+        # Tiap thread punya AuthorizedSession sendiri (requests.Session tidak aman
+        # dipakai lintas thread), tapi berbagi objek Credentials yang sama.
+        thread_local = threading.local()
+
+        def _session():
+            s = getattr(thread_local, "session", None)
+            if s is None:
+                from google.auth.transport.requests import AuthorizedSession
+                s = AuthorizedSession(creds)
+                thread_local.session = s
+            return s
 
     def download_one(file_meta):
         dest_path = os.path.join(output_dir, file_meta["name"])
@@ -159,7 +285,10 @@ def _download_all_parallel(api_key, files, output_dir, progress_callback=None):
             base, ext = os.path.splitext(file_meta["name"])
             dest_path = os.path.join(output_dir, f"{base}_{file_meta['id'][:6]}{ext}")
         try:
-            _download_file(api_key, file_meta["id"], dest_path)
+            if use_oauth:
+                _download_file_oauth(_session(), file_meta["id"], dest_path)
+            else:
+                _download_file(None, file_meta["id"], dest_path)
             return dest_path, file_meta["name"]
         except Exception as e:
             logger.warning("Gagal unduh '%s': %s", file_meta["name"], e)
@@ -210,8 +339,11 @@ def download_from_drive(link, output_dir=None, progress_callback=None):
     if drive_id is None:
         return [], "Link Google Drive tidak valid. Pastikan formatnya benar."
 
+    creds = _build_oauth_credentials()
+    logger.info("Metode download Drive: %s", "OAuth (alt=media)" if creds else "web-URL publik (fallback)")
+
     try:
-        service = _build_service()
+        service = _build_service(creds)
     except ValueError as e:
         return [], str(e)
 
@@ -231,9 +363,10 @@ def download_from_drive(link, output_dir=None, progress_callback=None):
         return [], "Tidak ada foto valid ditemukan. Pastikan folder berisi file JPG/PNG/HEIC."
 
     files = files[:MAX_PHOTOS_UPLOAD]
-    api_key = _get_api_key()
 
-    photo_paths, download_error = _download_all_parallel(api_key, files, output_dir, progress_callback)
+    photo_paths, download_error = _download_all_parallel(
+        files, output_dir, creds=creds, progress_callback=progress_callback
+    )
 
     if not photo_paths:
         detail = f" Detail: {download_error}" if download_error else ""

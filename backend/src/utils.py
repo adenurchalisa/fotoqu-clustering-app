@@ -27,12 +27,19 @@ def _write_regular_file(f, output_dir):
     return path
 
 
-def _extract_zip_entry(zip_bytes, entry, output_dir):
-    """Ekstrak satu entry ZIP ke disk. Return: path foto, atau None."""
+def _extract_zip_entry(zip_bytes, entry, output_dir, output_dir_real):
+    """Ekstrak satu entry ZIP ke disk. Return: path foto, atau None.
+
+    `output_dir_real` harus sudah di-realpath() SEKALI oleh pemanggil, dan semua
+    subfolder tujuan harus sudah dibuat SEBELUM dispatch paralel (lihat
+    save_uploaded_files) — os.path.realpath() pada Windows bisa memberi hasil
+    berbeda sesaat untuk path yang folder induknya sedang dibuat oleh thread lain
+    secara bersamaan, yang membuat guard Zip Slip di bawah salah membuang file
+    (silent, tanpa exception)."""
     with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as zf:
         # Guard: Zip Slip protection
         safe_path = os.path.realpath(os.path.join(output_dir, entry))
-        if not safe_path.startswith(os.path.realpath(output_dir)):
+        if not safe_path.startswith(output_dir_real):
             return None
 
         extracted = zf.extract(entry, output_dir)
@@ -50,6 +57,7 @@ def save_uploaded_files(uploaded_files, output_dir=None):
     if output_dir is None:
         output_dir = os.path.join(TEMP_DIR, "uploads")
     os.makedirs(output_dir, exist_ok=True)
+    output_dir_real = os.path.realpath(output_dir)
 
     tasks = []
     n_planned = 0
@@ -63,13 +71,24 @@ def save_uploaded_files(uploaded_files, output_dir=None):
         if name_lower.endswith(".zip"):
             zip_bytes = bytes(f.getbuffer())
             with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as zf:
+                entries = []
                 for entry in zf.namelist():
                     if n_planned >= MAX_PHOTOS_UPLOAD:
                         break
                     if not any(entry.lower().endswith(ext) for ext in SUPPORTED_FORMATS):
                         continue
-                    tasks.append((_extract_zip_entry, (zip_bytes, entry, output_dir)))
+                    entries.append(entry)
                     n_planned += 1
+
+            # Buat semua subfolder tujuan SEBELUM dispatch paralel — realpath() di
+            # Windows bisa memberi hasil tidak konsisten untuk folder yang sedang
+            # dibuat bersamaan oleh thread lain (lihat docstring _extract_zip_entry).
+            subdirs = {os.path.dirname(os.path.join(output_dir, e)) for e in entries}
+            for d in subdirs:
+                os.makedirs(d, exist_ok=True)
+
+            for entry in entries:
+                tasks.append((_extract_zip_entry, (zip_bytes, entry, output_dir, output_dir_real)))
 
         elif any(name_lower.endswith(ext) for ext in SUPPORTED_FORMATS):
             tasks.append((_write_regular_file, (f, output_dir)))

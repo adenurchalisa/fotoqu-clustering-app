@@ -7,11 +7,23 @@ import type { JobStatusResponse } from "../types";
 import ProgressBar from "../components/ProgressBar";
 import ProcessHeader from "../components/ProcessHeader";
 
+function formatSeconds(s: number): string {
+  return `${s.toFixed(1)} detik`;
+}
+
 export default function Processing() {
   const { jobId } = useParams<{ jobId: string }>();
   const navigate = useNavigate();
   const [state, setState] = useState<JobStatusResponse | null>(null);
   const esRef = useRef<EventSource | null>(null);
+  const startedAtRef = useRef<number>(Date.now());
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    if (state?.status !== "running") return;
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, [state?.status]);
 
   useEffect(() => {
     if (!jobId) return;
@@ -54,6 +66,39 @@ export default function Processing() {
 
   const pct = state?.progress_pct ?? 0;
   const status = state?.status ?? "running";
+
+  // Status tiap tahap ditentukan dari ADA/TIDAKNYA field durasi dari backend, bukan
+  // dari pct — pct di-reset dari progress unduh Drive (0-100%) ke progress pipeline
+  // (0-100% lagi) sehingga tidak reliable sebagai penanda transisi antar-tahap.
+  const totalElapsed = (now - startedAtRef.current) / 1000;
+  const loadSeconds = state?.load_seconds;
+  const faceSeconds = state?.face_extract_seconds;
+  const clusterSeconds = state?.clustering_seconds;
+
+  let loadLabel: string;
+  if (loadSeconds !== undefined) {
+    loadLabel = formatSeconds(loadSeconds);
+  } else {
+    loadLabel = `sedang berjalan… ${formatSeconds(totalElapsed)}`;
+  }
+
+  let faceLabel: string;
+  if (faceSeconds !== undefined) {
+    faceLabel = formatSeconds(faceSeconds);
+  } else if (loadSeconds !== undefined) {
+    faceLabel = `sedang berjalan… ${formatSeconds(Math.max(0, totalElapsed - loadSeconds))}`;
+  } else {
+    faceLabel = "menunggu";
+  }
+
+  let clusterLabel: string;
+  if (clusterSeconds !== undefined) {
+    clusterLabel = formatSeconds(clusterSeconds);
+  } else if (faceSeconds !== undefined && loadSeconds !== undefined) {
+    clusterLabel = `sedang berjalan… ${formatSeconds(Math.max(0, totalElapsed - loadSeconds - faceSeconds))}`;
+  } else {
+    clusterLabel = "menunggu";
+  }
 
   return (
     <div style={{ minHeight: "100vh", background: "#F7F5F0" }}>
@@ -132,6 +177,27 @@ export default function Processing() {
             >
               {state?.message ?? "Memulai…"}
             </p>
+
+            <div
+              className="mt-6 pt-6 grid grid-cols-3 gap-2"
+              style={{ borderTop: "1px solid rgba(20,18,16,0.08)" }}
+            >
+              <StageTiming
+                label="Memuat foto"
+                value={loadLabel}
+                active={loadSeconds === undefined}
+              />
+              <StageTiming
+                label="Deteksi wajah"
+                value={faceLabel}
+                active={loadSeconds !== undefined && faceSeconds === undefined}
+              />
+              <StageTiming
+                label="Clustering"
+                value={clusterLabel}
+                active={faceSeconds !== undefined && clusterSeconds === undefined}
+              />
+            </div>
           </div>
         )}
 
@@ -178,6 +244,43 @@ export default function Processing() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function StageTiming({
+  label,
+  value,
+  active,
+}: {
+  label: string;
+  value: string;
+  active: boolean;
+}) {
+  return (
+    <div>
+      <p
+        style={{
+          fontFamily: "'DM Mono', monospace",
+          fontSize: "0.6875rem",
+          letterSpacing: "0.08em",
+          color: "#A8A29A",
+          textTransform: "uppercase",
+        }}
+      >
+        {label}
+      </p>
+      <p
+        className="mt-1"
+        style={{
+          fontFamily: "'Inter', sans-serif",
+          fontSize: "0.875rem",
+          fontWeight: 500,
+          color: active ? "#C9843A" : "#141210",
+        }}
+      >
+        {value}
+      </p>
     </div>
   );
 }

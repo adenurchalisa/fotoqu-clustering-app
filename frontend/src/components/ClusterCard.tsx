@@ -7,6 +7,7 @@ import {
   downloadUrl,
 } from "../api/client";
 import type { ClusterSummary, PhotoRef } from "../types";
+import Lightbox from "./Lightbox";
 
 interface Props {
   jobId: string;
@@ -19,6 +20,7 @@ export default function ClusterCard({ jobId, cluster, selected, onToggleSelect }
   const [open, setOpen] = useState(false);
   const [photos, setPhotos] = useState<PhotoRef[] | null>(null);
   const [loading, setLoading] = useState(false);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   async function toggleOpen() {
     const next = !open;
@@ -125,15 +127,22 @@ export default function ClusterCard({ jobId, cluster, selected, onToggleSelect }
           )}
           {photos && photos.length > 0 && (
             <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-              {photos.map((p) => (
+              {photos.map((p, i) => (
                 <figure key={p.photo_id} className="text-center">
-                  <img
-                    src={fullPhotoUrl(jobId, p.photo_id)}
-                    loading="lazy"
-                    className="aspect-square w-full rounded-lg object-cover"
-                    style={{ background: "#EDEAE3" }}
-                    alt={p.filename}
-                  />
+                  <button
+                    onClick={() => setLightboxIndex(i)}
+                    className="block w-full"
+                    style={{ padding: 0, border: "none", background: "none", cursor: "pointer" }}
+                    title="Klik untuk lihat foto penuh"
+                  >
+                    <img
+                      src={fullPhotoUrl(jobId, p.photo_id)}
+                      loading="lazy"
+                      className="aspect-square w-full rounded-lg object-cover transition-opacity duration-150 hover:opacity-80"
+                      style={{ background: "#EDEAE3" }}
+                      alt={p.filename}
+                    />
+                  </button>
                   <figcaption
                     className="mt-1 truncate"
                     style={{
@@ -149,6 +158,16 @@ export default function ClusterCard({ jobId, cluster, selected, onToggleSelect }
             </div>
           )}
         </div>
+      )}
+
+      {photos && lightboxIndex !== null && (
+        <Lightbox
+          jobId={jobId}
+          photos={photos}
+          index={lightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+          onNavigate={setLightboxIndex}
+        />
       )}
     </div>
   );

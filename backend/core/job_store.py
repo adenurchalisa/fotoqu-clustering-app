@@ -43,6 +43,12 @@ class JobState:
     photo_index: list = field(default_factory=list)  # daftar path foto unik (idx = photo_id)
     created_at: float = field(default_factory=time.time)
 
+    # Durasi tiap tahap pipeline (diisi progresif oleh core/tasks.py)
+    pipeline_started_at: float = 0.0
+    load_seconds: float | None = None
+    face_extract_seconds: float | None = None
+    clustering_seconds: float | None = None
+
     def public_status(self) -> dict:
         """Ringkasan status untuk endpoint polling/SSE (tanpa data biner)."""
         data = {
@@ -57,6 +63,12 @@ class JobState:
             data["metrics"] = self.metrics
         if self.face_stats:
             data["face_stats"] = self.face_stats
+        if self.load_seconds is not None:
+            data["load_seconds"] = self.load_seconds
+        if self.face_extract_seconds is not None:
+            data["face_extract_seconds"] = self.face_extract_seconds
+        if self.clustering_seconds is not None:
+            data["clustering_seconds"] = self.clustering_seconds
         return data
 
 

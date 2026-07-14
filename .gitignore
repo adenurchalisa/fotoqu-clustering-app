@@ -48,6 +48,7 @@ test/
 .streamlit/secrets.toml
 .env
 backend/.env
+client_secret*.json
 
 # Node / frontend
 node_modules/

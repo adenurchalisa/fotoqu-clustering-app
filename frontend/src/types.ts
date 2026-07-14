@@ -24,6 +24,9 @@ export interface JobStatusResponse {
   error?: string;
   metrics?: JobMetrics;
   face_stats?: FaceStats;
+  load_seconds?: number;
+  face_extract_seconds?: number;
+  clustering_seconds?: number;
 }
 
 export interface ClusterSummary {
@@ -38,6 +41,9 @@ export interface ClustersResponse {
   metrics: JobMetrics;
   noise_count: number;
   clusters: ClusterSummary[];
+  load_seconds?: number;
+  face_extract_seconds?: number;
+  clustering_seconds?: number;
 }
 
 export interface PhotoRef {

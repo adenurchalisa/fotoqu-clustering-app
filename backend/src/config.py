@@ -21,7 +21,16 @@ except ImportError:
     pass
 
 # Google Drive API
+# API key — hanya bisa untuk LISTING metadata folder publik (fallback).
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
+
+# OAuth 2.0 — memberi identitas terautentikasi agar download konten (alt=media)
+# tidak di-throttle Google seperti API key. Di-setup SEKALI oleh pemilik app lewat
+# scripts/get_drive_token.py; user aplikasi tetap tidak perlu login. Kalau ketiganya
+# kosong, drive_handler otomatis jatuh ke metode web-URL lama (lebih lambat).
+GOOGLE_OAUTH_CLIENT_ID     = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_OAUTH_CLIENT_SECRET = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+GOOGLE_OAUTH_REFRESH_TOKEN = os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN", "")
 
 # InsightFace
 FACE_MODEL_NAME      = "buffalo_l"
@@ -55,6 +64,13 @@ GLOSH_THRESHOLD = 0.9      # titik dengan score > 0.9 → outlier permanen, tida
 
 # approximate_predict strength threshold
 STRENGTH_MIN = 0.1         # wajah dengan strength < 0.1 → tetap noise (singleton)
+
+# Post-processing: gabungkan cluster dengan centroid embedding sangat mirip.
+# HDBSCAN bisa memecah 1 identitas jadi beberapa density region kalau variasi foto
+# besar (beda pencahayaan/sudut/ekspresi). Titik awal 0.55 dari cosine similarity
+# ArcFace (same-person biasanya >0.4-0.5, different-person <0.3) — perlu di-tuning
+# lewat pengujian nyata (naikkan kalau ada false-merge, turunkan kalau masih kepecah).
+CLUSTER_MERGE_THRESHOLD = 0.55
 
 # App limits
 MAX_PHOTOS_UPLOAD = 3000

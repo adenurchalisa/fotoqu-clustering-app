@@ -19,6 +19,7 @@ from src.config import (
     UMAP_N_NEIGHBORS,
     UMAP_MIN_DIST,
     UMAP_RANDOM_STATE,
+    CLUSTER_MERGE_THRESHOLD,
 )
 
 logger = logging.getLogger(__name__)
@@ -155,6 +156,64 @@ def cluster_faces(embeddings):
     return labels_all, clu1, metrics
 
 
+def _merge_similar_clusters(clusters, threshold):
+    """Gabungkan cluster yang centroid embedding-nya sangat mirip (cosine similarity
+    >= threshold). HDBSCAN kadang memecah 1 identitas jadi beberapa density region
+    terpisah kalau variasi foto (pencahayaan/sudut/ekspresi) besar — ini menyatukannya
+    kembali berdasarkan kemiripan wajah aktual, bukan kedekatan density.
+
+    Pakai embedding ArcFace mentah 512-dim (bukan UMAP space) — cosine similarity di
+    ruang ArcFace adalah metrik standar untuk kemiripan identitas wajah, lebih bisa
+    diandalkan untuk keputusan merge daripada jarak di ruang UMAP hasil reduksi.
+    """
+    if len(clusters) < 2:
+        return clusters
+
+    labels = list(clusters.keys())
+    centroids = {}
+    for label in labels:
+        embs = np.array([f["embedding"] for f in clusters[label]])
+        embs_norm = embs / np.linalg.norm(embs, axis=1, keepdims=True)
+        centroid = embs_norm.mean(axis=0)
+        centroids[label] = centroid / np.linalg.norm(centroid)
+
+    # Union-Find sederhana untuk merge transitif (A~B, B~C -> 1 grup)
+    parent = {label: label for label in labels}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    n_merges = 0
+    for i in range(len(labels)):
+        for j in range(i + 1, len(labels)):
+            a, b = labels[i], labels[j]
+            sim = float(np.dot(centroids[a], centroids[b]))
+            if sim >= threshold:
+                union(a, b)
+                n_merges += 1
+
+    merged = {}
+    for label in labels:
+        root = find(label)
+        merged.setdefault(root, []).extend(clusters[label])
+
+    if n_merges > 0:
+        logger.info(
+            f"Merge cluster: {len(clusters)} -> {len(merged)} cluster "
+            f"(threshold={threshold}, {n_merges} pasangan cocok)"
+        )
+
+    return merged
+
+
 def run_clustering_pipeline(all_faces, progress_callback=None):
     if not all_faces:
         return {}, [], {
@@ -185,5 +244,8 @@ def run_clustering_pipeline(all_faces, progress_callback=None):
         else:
             clusters.setdefault(label, []).append(face)
 
+    clusters = _merge_similar_clusters(clusters, CLUSTER_MERGE_THRESHOLD)
     clusters = dict(sorted(clusters.items(), key=lambda x: len(x[1]), reverse=True))
+    # n_clusters dihitung sebelum merge — sinkronkan ke jumlah cluster final
+    metrics["n_clusters"] = len(clusters)
     return clusters, noise_faces, metrics

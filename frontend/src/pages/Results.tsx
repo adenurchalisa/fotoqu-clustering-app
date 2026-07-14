@@ -1,11 +1,18 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { Download, RotateCcw } from "lucide-react";
+import { Download, RotateCcw, CloudDownload, ScanFace, Boxes, Clock } from "lucide-react";
 import { getClusters, downloadUrl, noiseThumbUrl } from "../api/client";
 import type { ClustersResponse } from "../types";
 import Metric from "../components/Metric";
 import ClusterCard from "../components/ClusterCard";
 import ProcessHeader from "../components/ProcessHeader";
+
+function formatDuration(s: number): string {
+  if (s < 60) return `${s.toFixed(1)}d`;
+  const mins = Math.floor(s / 60);
+  const secs = Math.round(s % 60);
+  return `${mins}m ${secs}d`;
+}
 
 export default function Results() {
   const { jobId } = useParams<{ jobId: string }>();
@@ -135,6 +142,12 @@ export default function Results() {
           <Metric label="Silhouette" value={m.silhouette ?? "N/A"} />
         </div>
 
+        <TimingSection
+          load={data.load_seconds}
+          face={data.face_extract_seconds}
+          cluster={data.clustering_seconds}
+        />
+
         <div
           className="mt-8 flex flex-wrap items-center justify-between gap-4 rounded-2xl px-6 py-5"
           style={{ background: "#EDEAE3" }}
@@ -225,6 +238,158 @@ export default function Results() {
           </Link>
         </div>
       </div>
+    </div>
+  );
+}
+
+const STAGE_MEMUAT = "#C9843A"; // terracotta (accent)
+const STAGE_DETEKSI = "#D9A566"; // amber terang
+const STAGE_CLUSTER = "#8C6239"; // cokelat dalam
+
+function TimingSection({
+  load,
+  face,
+  cluster,
+}: {
+  load?: number;
+  face?: number;
+  cluster?: number;
+}) {
+  const stages = [
+    { key: "load", label: "Memuat foto", value: load, color: STAGE_MEMUAT, icon: CloudDownload },
+    { key: "face", label: "Deteksi wajah", value: face, color: STAGE_DETEKSI, icon: ScanFace },
+    { key: "cluster", label: "Clustering", value: cluster, color: STAGE_CLUSTER, icon: Boxes },
+  ].filter((s) => s.value !== undefined) as {
+    key: string;
+    label: string;
+    value: number;
+    color: string;
+    icon: typeof CloudDownload;
+  }[];
+
+  if (stages.length === 0) return null;
+
+  const total = stages.reduce((sum, s) => sum + s.value, 0);
+
+  return (
+    <div className="mt-6">
+      <div
+        className="mb-3"
+        style={{
+          fontFamily: "'DM Mono', monospace",
+          fontSize: "0.6875rem",
+          letterSpacing: "0.14em",
+          color: "#C9843A",
+        }}
+      >
+        WAKTU PROSES
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {stages.map((s) => (
+          <TimingCard
+            key={s.key}
+            icon={<s.icon size={18} color={s.color} />}
+            label={s.label}
+            value={formatDuration(s.value)}
+            sub={total > 0 ? `${Math.round((s.value / total) * 100)}% dari total` : undefined}
+            dotColor={s.color}
+          />
+        ))}
+        <TimingCard
+          icon={<Clock size={18} color="#F7F5F0" />}
+          label="Total"
+          value={formatDuration(total)}
+          emphasize
+        />
+      </div>
+
+      {/* Bar proporsi — tahap mana yang paling lama */}
+      {stages.length > 1 && total > 0 && (
+        <div
+          className="mt-3 flex h-2.5 w-full overflow-hidden rounded-full"
+          style={{ background: "#EDEAE3" }}
+        >
+          {stages.map((s) => (
+            <div
+              key={s.key}
+              title={`${s.label}: ${formatDuration(s.value)}`}
+              style={{ width: `${(s.value / total) * 100}%`, background: s.color }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TimingCard({
+  icon,
+  label,
+  value,
+  sub,
+  dotColor,
+  emphasize = false,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  sub?: string;
+  dotColor?: string;
+  emphasize?: boolean;
+}) {
+  return (
+    <div
+      className="rounded-2xl p-5"
+      style={{
+        background: emphasize ? "#141210" : "#FFFFFF",
+        border: emphasize ? "none" : "1px solid rgba(20,18,16,0.08)",
+      }}
+    >
+      <div className="flex items-center gap-2">
+        {icon}
+        {dotColor && (
+          <span
+            className="inline-block h-2 w-2 rounded-full"
+            style={{ background: dotColor }}
+          />
+        )}
+      </div>
+      <div
+        className="mt-3"
+        style={{
+          fontFamily: "'DM Serif Display', serif",
+          fontSize: "1.75rem",
+          color: emphasize ? "#F7F5F0" : "#141210",
+          lineHeight: 1.1,
+        }}
+      >
+        {value}
+      </div>
+      <div
+        className="mt-1"
+        style={{
+          fontFamily: "'DM Mono', monospace",
+          fontSize: "0.6875rem",
+          letterSpacing: "0.08em",
+          color: emphasize ? "rgba(247,245,240,0.6)" : "#7A7570",
+          textTransform: "uppercase",
+        }}
+      >
+        {label}
+      </div>
+      {sub && (
+        <div
+          className="mt-1"
+          style={{
+            fontFamily: "'Inter', sans-serif",
+            fontSize: "0.75rem",
+            color: emphasize ? "rgba(247,245,240,0.5)" : "#A8A29A",
+          }}
+        >
+          {sub}
+        </div>
+      )}
     </div>
   );
 }

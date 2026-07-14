@@ -49,6 +49,9 @@ async def list_clusters(job_id: str):
         "metrics": job.metrics,
         "noise_count": len(job.noise_faces or []),
         "clusters": clusters_out,
+        "load_seconds": job.load_seconds,
+        "face_extract_seconds": job.face_extract_seconds,
+        "clustering_seconds": job.clustering_seconds,
     }
 
 
