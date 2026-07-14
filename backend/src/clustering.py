@@ -191,25 +191,34 @@ def _merge_similar_clusters(clusters, threshold):
         if ra != rb:
             parent[rb] = ra
 
-    n_merges = 0
+    _NEAR_MISS_MARGIN = 0.10  # log pasangan dalam jarak 10% di bawah threshold (debug)
+    merge_log = []
+    near_miss_log = []
+
     for i in range(len(labels)):
         for j in range(i + 1, len(labels)):
             a, b = labels[i], labels[j]
             sim = float(np.dot(centroids[a], centroids[b]))
+            size_a, size_b = len(clusters[a]), len(clusters[b])
             if sim >= threshold:
                 union(a, b)
-                n_merges += 1
+                merge_log.append((sim, a, size_a, b, size_b))
+            elif sim >= threshold - _NEAR_MISS_MARGIN:
+                near_miss_log.append((sim, a, size_a, b, size_b))
 
     merged = {}
     for label in labels:
         root = find(label)
         merged.setdefault(root, []).extend(clusters[label])
 
-    if n_merges > 0:
-        logger.info(
-            f"Merge cluster: {len(clusters)} -> {len(merged)} cluster "
-            f"(threshold={threshold}, {n_merges} pasangan cocok)"
-        )
+    logger.info(
+        "Merge cluster: %d -> %d (threshold=%.2f, %d pasangan di-merge)",
+        len(clusters), len(merged), threshold, len(merge_log),
+    )
+    for sim, a, sa, b, sb in sorted(merge_log, reverse=True):
+        logger.info("  MERGE  cluster %s (%d wajah) + cluster %s (%d wajah) sim=%.4f", a, sa, b, sb, sim)
+    for sim, a, sa, b, sb in sorted(near_miss_log, reverse=True)[:5]:
+        logger.info("  DEKAT  cluster %s (%d wajah) + cluster %s (%d wajah) sim=%.4f [tidak di-merge]", a, sa, b, sb, sim)
 
     return merged
 
