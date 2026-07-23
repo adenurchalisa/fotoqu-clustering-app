@@ -55,9 +55,12 @@ HDBSCAN_CLUSTER_SELECTION_METHOD = "eom"
 HDBSCAN_MCS_PASS1 = 15     # optimal untuk dataset >= 200 wajah
 HDBSCAN_MS_PASS1  = 10     # optimal dari grid search
 
-# HDBSCAN Pass 2 — re-cluster noise dari Pass 1 dengan parameter lebih longgar
+# HDBSCAN Pass 2 — re-cluster noise dari Pass 1 (parameter dari NB11 Skenario E).
+# ms(=10) > mcs(=2) valid di HDBSCAN: min_samples besar membuat estimasi densitas
+# lebih konservatif. Nilai ini menghasilkan angka tervalidasi (coverage 99,6%) —
+# harus identik dengan NB11 agar app mereplikasi metode yang dievaluasi.
 HDBSCAN_MCS_PASS2 = 2
-HDBSCAN_MS_PASS2  = 1
+HDBSCAN_MS_PASS2  = 10
 
 # GLOSH — density-based outlier score dari clusterer Pass 1 (range 0–1)
 GLOSH_THRESHOLD = 0.9      # titik dengan score > 0.9 → outlier permanen, tidak di-assign
