@@ -72,6 +72,19 @@ def _build_service(creds=None):
     return build("drive", "v3", developerKey=api_key, cache_discovery=False)
 
 
+_INVALID_FILENAME_CHARS = re.compile(r'[\\/:*?"<>|]')
+
+
+def _sanitize_filename(name):
+    """Ganti karakter yang tidak valid di nama file Windows (mis. '/') dengan '_'.
+
+    Google Drive mengizinkan karakter seperti '/' pada nama file/folder, tapi Windows
+    melarangnya (dianggap pemisah path) — tanpa sanitasi ini menyebabkan WinError 3
+    saat os.path.join menafsirkan nama file sebagai subfolder yang tidak ada.
+    """
+    return _INVALID_FILENAME_CHARS.sub("_", name).strip()
+
+
 def extract_drive_id(link):
     """Ekstrak folder/file ID dari Google Drive link."""
     folder_match = re.search(r'/folders/([a-zA-Z0-9_-]+)', link)
@@ -280,9 +293,10 @@ def _download_all_parallel(files, output_dir, creds=None, progress_callback=None
             return s
 
     def download_one(file_meta):
-        dest_path = os.path.join(output_dir, file_meta["name"])
+        safe_name = _sanitize_filename(file_meta["name"])
+        dest_path = os.path.join(output_dir, safe_name)
         if os.path.exists(dest_path):
-            base, ext = os.path.splitext(file_meta["name"])
+            base, ext = os.path.splitext(safe_name)
             dest_path = os.path.join(output_dir, f"{base}_{file_meta['id'][:6]}{ext}")
         try:
             if use_oauth:
